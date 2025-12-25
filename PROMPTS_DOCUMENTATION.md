@@ -694,3 +694,80 @@ const formatMessage = (message: UIChatMessage) => {
 ```
 
 ---
+
+## 4. Knowledge Base QA Prompts
+
+Knowledge Base QA prompts enable Retrieval-Augmented Generation (RAG) for answering questions based on user-uploaded documents and knowledge bases. They are located in `packages/prompts/src/prompts/knowledgeBaseQA/`.
+
+### 4.1 Knowledge Base QA Main Prompt
+
+**Purpose:** Combines all knowledge base context elements into a comprehensive QA prompt.
+
+**Location:** `packages/prompts/src/prompts/knowledgeBaseQA/index.ts`
+
+**Input:** Retrieved chunks, knowledge bases, user query, and optional rewritten query
+
+**Output:** Complete knowledge base QA context
+
+```typescript
+`<knowledge_base_qa_info>
+You are also a helpful assistant good answering questions related to ${domains}. And you'll be provided with a question and several passages that might be relevant. And currently your task is to provide answer based on the question and passages.
+<knowledge_base_anwser_instruction>
+- Note that passages might not be relevant to the question, please only use the passages that are relevant.
+- if there is no relevant passage, please answer using your knowledge.
+- Answer should use the same original language as the question and follow markdown syntax.
+</knowledge_base_anwser_instruction>
+${knowledgePrompts(knowledge)}
+${chunkPrompts(chunks)}
+${userQueryPrompt(userQuery, rewriteQuery)}
+</knowledge_base_qa_info>`
+```
+
+### 4.2 Knowledge Base Description Prompt
+
+**Purpose:** Lists available knowledge bases with their metadata for context.
+
+**Location:** `packages/prompts/src/prompts/knowledgeBaseQA/knowledge.ts`
+
+**Format:**
+
+```typescript
+`<knowledge_bases>
+<knowledge_bases_docstring>here are the knowledge base scope we retrieve chunks from:</knowledge_bases_docstring>
+<knowledge id="${item.id}" name="${item.name}" type="${item.type}" fileType="${item.fileType}">${item.description || ''}</knowledge>
+</knowledge_bases>`
+```
+
+### 4.3 Retrieved Chunks Prompt
+
+**Purpose:** Formats retrieved document chunks with similarity scores and metadata.
+
+**Location:** `packages/prompts/src/prompts/knowledgeBaseQA/chunk.ts`
+
+**Format:**
+
+```typescript
+`<retrieved_chunks>
+<retrieved_chunks_docstring>here are retrived chunks you can refer to:</retrieved_chunks_docstring>
+<chunk fileId="${item.fileId}" fileName="${item.fileName}" similarity="${item.similarity}" pageNumber="${item.pageNumber}">${item.text}</chunk>
+</retrieved_chunks>`
+```
+
+### 4.4 User Query Prompt
+
+**Purpose:** Formats user query with optional rewritten version for better retrieval.
+
+**Location:** `packages/prompts/src/prompts/knowledgeBaseQA/userQuery.ts`
+
+**Format:**
+
+```typescript
+`<user_query>
+<user_query_docstring>to make result better, we may rewrite user's question. If there is a rewrite query, it will be wrapper with \`rewrite_query\` tag.</user_query_docstring>
+
+<raw_query>${userQuery.trim()}</raw_query>
+${rewriteQuery ? `<rewrite_query>${rewriteQuery.trim()}</rewrite_query>` : ''}
+<user_query>`
+```
+
+---
