@@ -336,3 +336,160 @@ Response with Knowledge Base Context
 | Response Generation | context + messages | AI response | (main model) |
 
 ---
+
+## 3. Translation Pipeline
+
+The translation pipeline handles message translation with automatic language detection.
+
+### Flow Diagram
+
+```
++------------------+     +----------------------+     +------------------------+
+|   Message to     | --> | Language Detection   | --> | Translation Request    |
+|   Translate      |     | (Parallel)           |     | (Streaming)            |
++------------------+     +----------------------+     +------------------------+
+                                  |                            |
+                                  v                            v
+                         +----------------------+     +------------------------+
+                         | Detect Source        |     | Translate to Target    |
+                         | Language (locale)    |     | Language               |
+                         +----------------------+     +------------------------+
+                                  |                            |
+                                  +-------------+--------------+
+                                                |
+                                                v
+                                       +----------------+
+                                       | Update Message |
+                                       | with translate |
+                                       | metadata       |
+                                       +----------------+
+```
+
+### Pipeline Stages
+
+#### Stage 1: Translation Request
+**Location:** `src/store/chat/slices/translate/action.ts` - `translateMessage()`
+
+```
+User clicks "Translate" on message
+    |
+    v
+Get message content by ID
+    |
+    v
+Initialize translate metadata:
+{ content: '', from: '', to: targetLang }
+```
+
+#### Stage 2: Language Detection (Parallel)
+**Location:** `src/store/chat/slices/translate/action.ts`
+
+**Runs in parallel with translation**
+
+```
+Message Content
+    |
+    v
++------------------------------------------+
+| chainLangDetect Prompt:                  |
+| "你是一名精通全世界语言的语言专家，       |
+| 你需要识别用户输入的内容，以国际标准      |
+| locale 进行输出"                         |
++------------------------------------------+
+    |
+    v
+AI Model Call
+    |
+    v
+Detected Locale (e.g., "zh-CN", "en-US")
+```
+
+**Prompts Used:**
+- `chainLangDetect` (packages/prompts/src/chains/langDetect.ts)
+
+**Data Flow:**
+```
+Input: "这是一段中文文本"
+Output: "zh-CN"
+```
+
+#### Stage 3: Translation (Parallel)
+**Location:** `src/store/chat/slices/translate/action.ts`
+
+```
+Message Content + Target Language
+    |
+    v
++------------------------------------------+
+| chainTranslate Prompt:                   |
+| "You are a professional translator.      |
+| Translate the input text to {targetLang}"|
+|                                          |
+| Rules:                                   |
+| - Preserve technical terms               |
+| - Maintain formatting                    |
+| - Use natural expressions                |
++------------------------------------------+
+    |
+    v
+AI Model Call (streaming)
+    |
+    v
+Translated Text (streamed to UI)
+```
+
+**Prompts Used:**
+- `chainTranslate` (packages/prompts/src/chains/translate.ts)
+
+**Data Flow:**
+```
+Input: {
+  content: "这是一段中文文本",
+  targetLang: "en-US"
+}
+
+Output: "This is a Chinese text"
+```
+
+#### Stage 4: Result Aggregation
+**Location:** `src/store/chat/slices/translate/action.ts`
+
+```
+Language Detection Result + Translation Result
+    |
+    v
+Update message translate metadata:
+{
+  content: translatedText,
+  from: detectedLocale,
+  to: targetLang
+}
+    |
+    v
+Save to database
+```
+
+### Data Flow Summary
+
+| Stage | Input | Output | Prompt Used |
+|-------|-------|--------|-------------|
+| Language Detection | message content | locale code | `chainLangDetect` |
+| Translation | content + targetLang | translated text | `chainTranslate` |
+| Aggregation | both results | translate metadata | - |
+
+### Parallel Execution
+
+Both language detection and translation run concurrently for better performance:
+
+```
+translateMessage(id, targetLang)
+    |
+    +---> chatService.fetchPresetTaskResult(chainLangDetect)  ----+
+    |                                                              |
+    +---> chatService.fetchPresetTaskResult(chainTranslate)  ----+
+                                                                   |
+                                                                   v
+                                                        Merge Results
+```
+
+---
