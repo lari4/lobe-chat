@@ -727,3 +727,436 @@ Check maxResponseInRow limit
 - All tools available including create_todo, finish_todo
 
 ---
+
+## 5. Topic Summary Pipeline
+
+The topic summary pipeline automatically generates titles for conversation topics.
+
+### Flow Diagram
+
+```
++------------------+     +----------------------+     +------------------------+
+|   Save to Topic  | --> | Get Messages from    | --> | Chain Summary Title    |
+|   Action         |     | Current Conversation |     | Prompt                 |
++------------------+     +----------------------+     +------------------------+
+                                                               |
+                                                               v
+                                                      +------------------------+
+                                                      | Update Topic Title     |
+                                                      | (streaming to UI)      |
+                                                      +------------------------+
+```
+
+### Pipeline Stages
+
+#### Stage 1: Topic Creation
+**Location:** `src/store/chat/slices/topic/action.ts` - `saveToTopic()`
+
+```
+User saves conversation to topic
+    |
+    v
+Create topic with default title: "New Topic"
+    |
+    v
+Get all messages from current conversation
+    |
+    v
+Call summaryTopicTitle(topicId, messages)
+```
+
+#### Stage 2: Title Generation
+**Location:** `src/store/chat/slices/topic/action.ts` - `summaryTopicTitle()`
+
+```
+Messages Array + Current Locale
+    |
+    v
++------------------------------------------+
+| chainSummaryTitle Prompt:                |
+| "You are a professional conversation     |
+| summarizer. Generate a concise title     |
+| that captures the essence..."            |
+|                                          |
+| Rules:                                   |
+| - Max 10 words / 50 characters           |
+| - No punctuation                         |
+| - Use specified locale language          |
++------------------------------------------+
+    |
+    v
+AI Model Call (streaming)
+    |
+    v
+Stream title to UI in real-time
+    |
+    v
+Update topic record with final title
+```
+
+**Prompts Used:**
+- `chainSummaryTitle` (packages/prompts/src/chains/summaryTitle.ts)
+
+**Data Flow:**
+```
+Input: {
+  messages: [
+    { role: 'user', content: 'How do I use React hooks?' },
+    { role: 'assistant', content: 'React hooks are functions...' }
+  ],
+  locale: 'en-US'
+}
+
+Output: "React Hooks Usage Guide"
+```
+
+---
+
+## 6. Tool Calling Pipeline
+
+The tool calling pipeline handles function calling for agents with enabled tools.
+
+### Flow Diagram
+
+```
++------------------+     +----------------------+     +------------------------+
+|   AI Response    | --> | Detect Tool Calls    | --> | Execute Each Tool      |
+|   with tools     |     | in Response          |     | Sequentially           |
++------------------+     +----------------------+     +------------------------+
+                                                               |
+        +------------------------------------------------------+
+        |
+        v
++-------------------+     +----------------------+     +------------------------+
+| Tool Result       | --> | Append Tool Message  | --> | Continue AI Response   |
+| (success/error)   |     | to Conversation      |     | (with tool results)    |
++-------------------+     +----------------------+     +------------------------+
+```
+
+### Pipeline Stages
+
+#### Stage 1: Tool Call Detection
+**Location:** `src/store/chat/slices/aiChat/actions/generateAIChat.ts`
+
+```
+AI Response Stream
+    |
+    v
+Check for tool_calls in response
+    |
+    +-- No tool calls --> Complete response normally
+    |
+    +-- Has tool calls --> Parse and execute
+```
+
+#### Stage 2: Tool Execution
+**Location:** `src/store/chat/slices/tool/action.ts` - `triggerToolCalls()`
+
+```
+Tool Calls Array: [
+  { id: "call_1", function: { name: "search", arguments: "{...}" } }
+]
+    |
+    v
+For each tool call:
+    |
+    v
++------------------------------------------+
+| 1. Parse function arguments (JSON)       |
+| 2. Find plugin handler                   |
+| 3. Execute tool function                 |
+| 4. Get result (or error)                 |
++------------------------------------------+
+    |
+    v
+Create tool message:
+{
+  role: 'tool',
+  content: toolResult,
+  tool_call_id: call.id
+}
+```
+
+#### Stage 3: Follow-up Response
+**Location:** `src/store/chat/slices/aiChat/actions/generateAIChat.ts`
+
+```
+Conversation + Tool Results
+    |
+    v
+AI Model Call (with tool results in context)
+    |
+    v
++------------------------------------------+
+| AI incorporates tool results             |
+| - May call more tools                    |
+| - Or generate final response             |
++------------------------------------------+
+    |
+    v
+Loop until no more tool calls or max iterations
+```
+
+### Tool Types
+
+| Tool Type | Location | Description |
+|-----------|----------|-------------|
+| Web Browsing | `src/tools/web-browsing/` | Search, crawl pages |
+| Local System | `src/tools/local-system/` | File operations |
+| Artifacts | `src/tools/artifacts/` | Create code/diagrams |
+| Plugins | External | Third-party tools |
+
+---
+
+## 7. Memory Compression Pipeline
+
+The memory compression pipeline summarizes long conversation histories.
+
+### Flow Diagram
+
+```
++------------------+     +----------------------+     +------------------------+
+|   Long Convo     | --> | Check Message Count  | --> | Chain Summary History  |
+|   Detected       |     | Threshold            |     | Prompt                 |
++------------------+     +----------------------+     +------------------------+
+                                                               |
+                                                               v
+                                                      +------------------------+
+                                                      | Store Summary in Topic |
+                                                      | for Future Context     |
+                                                      +------------------------+
+```
+
+### Pipeline Stages
+
+#### Stage 1: Trigger Condition
+**Location:** `src/store/chat/slices/aiChat/actions/memory.ts`
+
+```
+Check conditions:
+- Messages count > threshold
+- Topic exists
+- Summary not already generated
+```
+
+#### Stage 2: History Summarization
+**Location:** `src/store/chat/slices/aiChat/actions/memory.ts` - `internal_summaryHistory()`
+
+```
+Messages Array
+    |
+    v
++------------------------------------------+
+| chainSummaryHistory Prompt:              |
+| "You're an assistant who's good at       |
+| extracting key takeaways from            |
+| conversations and summarizing them."     |
+|                                          |
+| Rules:                                   |
+| - Maintain original language             |
+| - Limited to 400 tokens                  |
+| - Retain key information                 |
++------------------------------------------+
+    |
+    v
+AI Model Call (non-streaming)
+    |
+    v
+Store historySummary in topic record
+```
+
+**Prompts Used:**
+- `chainSummaryHistory` (packages/prompts/src/chains/summaryHistory.ts)
+
+#### Stage 3: Future Context Injection
+**Location:** `packages/context-engine/src/providers/HistorySummary.ts`
+
+```
+On subsequent messages:
+    |
+    v
+Check if topic.historySummary exists
+    |
+    v
+Inject summary into system message:
+<chat_history_summary>
+<summary>${historySummary}</summary>
+</chat_history_summary>
+```
+
+---
+
+## 8. Agent Creation Pipeline
+
+The agent creation pipeline helps users create new AI agents with auto-generated metadata.
+
+### Flow Diagram
+
+```
++------------------+     +----------------------+     +------------------------+
+|   User Provides  | --> | Generate Agent Name  | --> | Generate Description   |
+|   System Role    |     | (chainSummaryName)   |     | (chainSummaryDesc)     |
++------------------+     +----------------------+     +------------------------+
+                                                               |
+                                                               v
++------------------+     +----------------------+     +------------------------+
+|   Create Agent   | <-- | Generate Tags        | <-- | Pick Emoji             |
+|   Record         |     | (chainSummaryTags)   |     | (chainPickEmoji)       |
++------------------+     +----------------------+     +------------------------+
+```
+
+### Pipeline Stages
+
+#### Stage 1: Name Generation
+**Location:** `src/features/AgentSetting/store/action.ts`
+
+```
+System Role Text
+    |
+    v
++------------------------------------------+
+| chainSummaryAgentName Prompt:            |
+| "你是一名擅长起名的起名大师，名字需要有    |
+| 文学内涵，注重精炼和赋子意境"             |
+|                                          |
+| Rules:                                   |
+| - Max 10 characters                      |
+| - Translate to target locale             |
++------------------------------------------+
+    |
+    v
+Agent Name (e.g., "Code Sage")
+```
+
+#### Stage 2: Description Generation
+```
+System Role Text
+    |
+    v
++------------------------------------------+
+| chainSummaryDescription Prompt:          |
+| "你是一名擅长技能总结的助理，你需要将     |
+| 用户的输入的内容总结为一个角色技能简介"   |
+|                                          |
+| Rules:                                   |
+| - Max 20 characters                      |
+| - Clear and concise                      |
++------------------------------------------+
+    |
+    v
+Description (e.g., "Expert coding assistant")
+```
+
+#### Stage 3: Tags Generation
+```
+System Role Text
+    |
+    v
++------------------------------------------+
+| chainSummaryTags Prompt:                 |
+| "你是一名擅长会话标签总结的助理，你需要   |
+| 将用户的输入的内容提炼出分类标签"         |
+|                                          |
+| Rules:                                   |
+| - Max 5 tags                             |
+| - Comma-separated                        |
++------------------------------------------+
+    |
+    v
+Tags: ["coding", "development", "TypeScript"]
+```
+
+#### Stage 4: Emoji Selection
+```
+Agent Name + Description
+    |
+    v
++------------------------------------------+
+| chainPickEmoji Prompt:                   |
+| "You are an emoji expert who selects     |
+| the most appropriate emoji..."           |
+|                                          |
+| Rules:                                   |
+| - Single emoji only                      |
+| - Topic-specific over generic            |
++------------------------------------------+
+    |
+    v
+Emoji: "🧙"
+```
+
+**Prompts Used:**
+- `chainSummaryAgentName` (packages/prompts/src/chains/summaryAgentName.ts)
+- `chainSummaryDescription` (packages/prompts/src/chains/summaryDescription.ts)
+- `chainSummaryTags` (packages/prompts/src/chains/summaryTags.ts)
+- `chainPickEmoji` (packages/prompts/src/chains/pickEmoji.ts)
+
+---
+
+## Summary: All Pipelines Overview
+
+```
+                              LobeChat Pipeline Architecture
++===============================================================================+
+|                                                                               |
+|  +------------------------+        +------------------------+                 |
+|  |   Simple Chat          |        |   RAG Pipeline         |                 |
+|  |   Pipeline             |        |   (Knowledge Base)     |                 |
+|  +------------------------+        +------------------------+                 |
+|          |                                  |                                 |
+|          v                                  v                                 |
+|  +------------------------+        +------------------------+                 |
+|  | Context Engine         |        | Query Rewrite +        |                 |
+|  | - System Role          |        | Semantic Search        |                 |
+|  | - Tool System Role     |        +------------------------+                 |
+|  | - History Summary      |                                                   |
+|  | - Files Context        |                                                   |
+|  +------------------------+                                                   |
+|                                                                               |
+|  +------------------------+        +------------------------+                 |
+|  |   Translation          |        |   Group Chat           |                 |
+|  |   Pipeline             |        |   Pipeline             |                 |
+|  +------------------------+        +------------------------+                 |
+|          |                                  |                                 |
+|          v                                  v                                 |
+|  +------------------------+        +------------------------+                 |
+|  | Lang Detect +          |        | Supervisor +           |                 |
+|  | Translation (Parallel) |        | Multi-Agent            |                 |
+|  +------------------------+        +------------------------+                 |
+|                                                                               |
+|  +------------------------+        +------------------------+                 |
+|  |   Tool Calling         |        |   Topic Summary        |                 |
+|  |   Pipeline             |        |   Pipeline             |                 |
+|  +------------------------+        +------------------------+                 |
+|          |                                  |                                 |
+|          v                                  v                                 |
+|  +------------------------+        +------------------------+                 |
+|  | Execute + Loop         |        | Title Generation       |                 |
+|  +------------------------+        +------------------------+                 |
+|                                                                               |
+|  +------------------------+        +------------------------+                 |
+|  |   Memory Compression   |        |   Agent Creation       |                 |
+|  |   Pipeline             |        |   Pipeline             |                 |
+|  +------------------------+        +------------------------+                 |
+|          |                                  |                                 |
+|          v                                  v                                 |
+|  +------------------------+        +------------------------+                 |
+|  | History Summary        |        | Name + Desc + Tags     |                 |
+|  +------------------------+        | + Emoji                |                 |
+|                                    +------------------------+                 |
+|                                                                               |
++===============================================================================+
+```
+
+### Quick Reference: Prompts by Pipeline
+
+| Pipeline | Prompts Used |
+|----------|--------------|
+| Simple Chat | SystemRoleInjector, ToolSystemRole, HistorySummary, FilesContext |
+| RAG | chainRewriteQuery, knowledgeBaseQAPrompts |
+| Translation | chainLangDetect, chainTranslate |
+| Group Chat | buildSupervisorPrompt, buildGroupChatSystemPrompt |
+| Topic Summary | chainSummaryTitle |
+| Tool Calling | Tool-specific system roles |
+| Memory Compression | chainSummaryHistory |
+| Agent Creation | chainSummaryAgentName, chainSummaryDescription, chainSummaryTags, chainPickEmoji |
