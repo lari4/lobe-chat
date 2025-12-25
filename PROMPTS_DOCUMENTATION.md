@@ -942,3 +942,138 @@ ${tool.systemRole ? `<collection.instructions>${tool.systemRole}</collection.ins
 ```
 
 ---
+
+## 7. Context Engine Providers
+
+Context Engine Providers are responsible for injecting prompts and context into the message pipeline before sending to the AI model. They are located in `packages/context-engine/src/providers/`.
+
+### 7.1 System Role Injector
+
+**Purpose:** Injects the user-configured system role at the beginning of conversations.
+
+**Location:** `packages/context-engine/src/providers/SystemRoleInjector.ts`
+
+**Behavior:**
+- Injects system role as first message if not already present
+- Skips injection if a system message already exists
+- Updates metadata with `systemRoleInjected: true` flag
+
+```typescript
+// Injected system message structure:
+{
+  content: config.systemRole,
+  role: 'system',
+  id: `system-${Date.now()}`,
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+  meta: {}
+}
+```
+
+### 7.2 Tool System Role Provider
+
+**Purpose:** Injects tool-specific system roles for models that support function calling.
+
+**Location:** `packages/context-engine/src/providers/ToolSystemRole.ts`
+
+**Behavior:**
+- Checks if tools are available and function calling is supported
+- Merges tool system role with existing system message if present
+- Creates new system message if none exists
+
+```typescript
+// Merged content structure:
+existingSystemMessage.content = [
+  existingSystemMessage.content,
+  toolSystemRole
+].filter(Boolean).join('\n\n');
+
+// Metadata tracking:
+metadata.toolSystemRole = {
+  injected: true,
+  toolsCount: tools.length,
+  contentLength: toolSystemRole.length,
+  supportsFunctionCall: true
+}
+```
+
+### 7.3 History Summary Provider
+
+**Purpose:** Injects conversation history summaries for long-running sessions.
+
+**Location:** `packages/context-engine/src/providers/HistorySummary.ts`
+
+**Default Format:**
+
+```typescript
+`<chat_history_summary>
+<docstring>Users may have lots of chat messages, here is the summary of the history:</docstring>
+<summary>${historySummary}</summary>
+</chat_history_summary>`
+```
+
+**Behavior:**
+- Merges with existing system message or creates new one
+- Supports custom formatting function via config
+- Tracks injection status in metadata
+
+### 7.4 System Role Composition
+
+**Purpose:** Combines welcome messages, plugins, and history summaries into a complete system role.
+
+**Location:** `packages/prompts/src/prompts/systemRole/index.ts`
+
+```typescript
+// BuiltinSystemRolePrompts combines:
+// 1. Welcome message
+// 2. Plugin descriptions
+// 3. History summary (if available)
+
+export const BuiltinSystemRolePrompts = ({
+  welcome,
+  plugins,
+  historySummary,
+}: {
+  historySummary?: string;
+  plugins?: string;
+  welcome?: string;
+}) => {
+  return [welcome, plugins, historySummary ? historySummaryPrompt(historySummary) : '']
+    .filter(Boolean)
+    .join('\n\n');
+};
+```
+
+### 7.5 Chat History Prompt
+
+**Purpose:** Formats conversation history in XML structure for context.
+
+**Location:** `packages/prompts/src/prompts/chatMessages/index.ts`
+
+```typescript
+`<chat_history>
+<${message.role}>${message.content}</${message.role}>
+</chat_history>`
+```
+
+---
+
+## Summary
+
+| Category | Count | Purpose |
+|----------|-------|---------|
+| Chain Prompts | 12 | NLP tasks (translation, summarization, etc.) |
+| Tool System Prompts | 3 | Tool capabilities (web, local system, artifacts) |
+| Group Chat Prompts | 4 | Multi-agent orchestration |
+| Knowledge Base QA | 4 | RAG and document QA |
+| File/Context Prompts | 6 | File handling and context injection |
+| Search/Plugin Prompts | 4 | Web search and plugin integration |
+| Context Engine Providers | 5 | Pipeline context injection |
+
+**Total: 38+ distinct prompts/templates**
+
+All prompts follow consistent patterns:
+- XML-based context formatting for structured data
+- Multi-language support where applicable
+- Few-shot examples for complex tasks
+- Clear separation of concerns between prompt types
