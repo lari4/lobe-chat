@@ -771,3 +771,174 @@ ${rewriteQuery ? `<rewrite_query>${rewriteQuery.trim()}</rewrite_query>` : ''}
 ```
 
 ---
+
+## 5. File and Context Prompts
+
+File prompts handle user-uploaded files (images, documents, videos) and provide context to the AI. They are located in `packages/prompts/src/prompts/files/`.
+
+### 5.1 Files Context Main Prompt
+
+**Purpose:** Combines images, files, and videos into a unified context with usage instructions.
+
+**Location:** `packages/prompts/src/prompts/files/index.ts`
+
+**Format:**
+
+```typescript
+`<!-- SYSTEM CONTEXT (NOT PART OF USER QUERY) -->
+<context.instruction>following part contains context information injected by the system. Please follow these instructions:
+
+1. Always prioritize handling user-visible content.
+2. the context is only required when user's queries rely on it.
+</context.instruction>
+<files_info>
+${imagesPrompts}
+${filePrompts}
+${videosPrompts}
+</files_info>
+<!-- END SYSTEM CONTEXT -->`
+```
+
+### 5.2 Image Prompt
+
+**Purpose:** Formats uploaded images with alt text and URLs.
+
+**Location:** `packages/prompts/src/prompts/files/image.ts`
+
+**Format:**
+
+```typescript
+`<images>
+<images_docstring>here are user upload images you can refer to</images_docstring>
+<image name="${item.alt}" url="${item.url}"></image>
+</images>`
+```
+
+### 5.3 File Content Prompt
+
+**Purpose:** Wraps file content with metadata for documents.
+
+**Location:** `packages/prompts/src/prompts/files/file.ts`
+
+**Format:**
+
+```typescript
+`<files>
+<files_docstring>here are user upload files you can refer to</files_docstring>
+<file id="${item.id}" name="${item.name}" type="${item.fileType}" size="${item.size}" url="${item.url}">${content}</file>
+</files>`
+```
+
+### 5.4 Video Prompt
+
+**Purpose:** Formats video references with metadata.
+
+**Location:** `packages/prompts/src/prompts/files/video.ts`
+
+**Format:**
+
+```typescript
+`<videos>
+<videos_docstring>here are user upload videos you can refer to</videos_docstring>
+<video name="${item.alt}" url="${item.url}"></video>
+</videos>`
+```
+
+### 5.5 PDF Page Template
+
+**Purpose:** Wraps PDF pages with page numbers for document processing.
+
+**Location:** `packages/file-loaders/src/loaders/pdf/prompt.ts`
+
+**Format:**
+
+```typescript
+`<page pageNumber="${pageNumber}">
+${page.pageContent}
+</page>`
+```
+
+### 5.6 Excel Sheet Template
+
+**Purpose:** Wraps Excel spreadsheet sheets with metadata.
+
+**Location:** `packages/file-loaders/src/loaders/excel/prompt.ts`
+
+**Format:**
+
+```typescript
+`<sheet name="${sheetName}" index="${sheetIndex}">
+${page.pageContent}
+</sheet>`
+```
+
+---
+
+## 6. Search and Plugin Prompts
+
+Search and plugin prompts handle web search results and external plugin integrations. They are located in `packages/prompts/src/prompts/search/` and `packages/prompts/src/prompts/plugin/`.
+
+### 6.1 Search Results Prompt
+
+**Purpose:** Converts web search results to token-efficient XML format for AI consumption.
+
+**Location:** `packages/prompts/src/prompts/search/searchResults.ts`
+
+**Format:**
+
+```typescript
+`<searchResults>
+  <item title="${escapeXmlAttr(item.title)}" url="${escapeXmlAttr(item.url)}" publishedDate="${item.publishedDate}" imgSrc="${item.imgSrc}" thumbnail="${item.thumbnail}">${escapeXmlContent(item.content)}</item>
+</searchResults>`
+```
+
+### 6.2 Crawl Results Prompt
+
+**Purpose:** Formats crawled web page content with metadata.
+
+**Location:** `packages/prompts/src/prompts/search/crawlResults.ts`
+
+**Format:**
+
+```typescript
+// Successful crawl:
+`<crawlResults>
+  <page url="${item.url}" title="${item.title}" contentType="${item.contentType}" description="${item.description}" length="${item.length}">${content}</page>
+</crawlResults>`
+
+// Error handling:
+`<crawlResults>
+  <error errorType="${item.errorType}" errorMessage="${item.errorMessage}" url="${item.url}" />
+</crawlResults>`
+```
+
+### 6.3 Plugin Prompt
+
+**Purpose:** Describes available plugins and their APIs to the AI.
+
+**Location:** `packages/prompts/src/prompts/plugin/index.ts`
+
+**Format:**
+
+```typescript
+`<plugins description="The plugins you can use below">
+${toolsPrompts(tools)}
+</plugins>`
+```
+
+### 6.4 Tool API Prompt
+
+**Purpose:** Formats individual tool APIs in structured XML format.
+
+**Location:** `packages/prompts/src/prompts/plugin/tools.ts`
+
+**Format:**
+
+```typescript
+`<collection name="${tool.name}">
+${tool.systemRole ? `<collection.instructions>${tool.systemRole}</collection.instructions>` : ''}
+<api identifier="${api.name}">${api.desc}</api>
+</collection>`
+```
+
+---
