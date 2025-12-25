@@ -510,3 +510,187 @@ The assistant can create and reference artifacts during conversations. Artifacts
 ```
 
 ---
+
+## 3. Group Chat Prompts
+
+Group chat prompts orchestrate multi-agent conversations, enabling a supervisor to coordinate multiple AI agents working together. They are located in `packages/prompts/src/prompts/groupChat/`.
+
+### 3.1 Group Chat Agent System Prompt
+
+**Purpose:** Provides individual agents with context and behavior guidelines when participating in group conversations.
+
+**Location:** `packages/prompts/src/prompts/groupChat/index.ts` - `buildGroupChatSystemPrompt()`
+
+**Input:** Base system role, agent ID, group members, target ID, and optional instructions
+
+**Output:** Complete system prompt for an agent in group chat context
+
+```typescript
+// Generated system prompt structure:
+`${baseSystemRole}
+
+Guidelines:
+
+- Stay in character as ${agentId} (${agentTitle})
+- Be concise and natural, behave like a real person
+- The group supervisor will decide whether to send it privately or publicly, so you just need to say the actual content, even it's a DM to a specific member. Do not pretend you've sent it.
+- Be collaborative and build upon others' responses when appropriate
+- Keep your responses concise and relevant to the ongoing discussion
+
+<group_members>
+${JSON.stringify(members, null, 2)}
+</group_members>
+
+Now it's your turn to respond. ${instructionText} You are sending message to ${targetText}. Please respond as this agent would, considering the full conversation history provided above. Directly return the message content, no other text. You do not need add author name or anything else.`
+```
+
+### 3.2 Group Chat Supervisor Prompt
+
+**Purpose:** Orchestrates the group conversation by deciding which agents should speak next and managing todo lists for productive conversations.
+
+**Location:** `packages/prompts/src/prompts/groupChat/index.ts` - `buildSupervisorPrompt()`
+
+**Input:** Available agents, conversation history, scene type (casual/productive), todo list, system prompt, and user name
+
+**Output:** Complete supervisor prompt with group context
+
+```typescript
+`You are a conversation supervisor for a group chat with multiple AI agents. Your role is to orchestrate a group of agents to make user feel natural and interactive.
+
+<group_role>
+${systemPrompt || ''}
+</group_role>
+
+<group_members>
+  <member id="${member.id}" name="${member.name}" />
+  ...
+</group_members>
+
+<conversation_history>
+${conversationHistory}
+</conversation_history>
+
+${todoListTag}
+
+RULES:
+
+- Do not forcing user to respond, only ask for information for one time before you get the information you need.
+- Make the group conversation feels like a real conversation.
+
+WHEN ASKING AGENTS TO SPEAK:
+
+- Only reference agents from the member list. Never invent new IDs.
+- Do not excessively gathering information from user, you should only ask for information when it's necessary.
+- If need many information from user, make single agent to ask for all.
+${dmRules}
+
+WHEN GENERATING TODOS: (productive scene only)
+
+- Only use Todo for complex tasks.
+- Break down the main objective into logical, sequential tasks.
+- Be concise and to the point. Each todo should no longer than 10 words. Do not create more than 5 todos.
+- Match user's message language.
+- By only assigning todo will not trigger agent response you still need to use trigger tool if needed.
+- Keep todo items synchronized with the context. Finish or create todos as progress changes.`
+```
+
+### 3.3 Supervisor Tools
+
+**Purpose:** Defines the tools available to the supervisor for managing group conversations.
+
+**Location:** `packages/prompts/src/contexts/supervisor/tools.ts`
+
+**Available Tools:**
+
+```typescript
+// trigger_agent - Trigger an agent to speak (group message)
+{
+  name: 'trigger_agent',
+  description: 'Trigger an agent to speak (group message).',
+  parameters: {
+    properties: {
+      id: { description: 'The agent id to trigger.', type: 'string' },
+      instruction: { description: 'The instruction or message for the agent. No longer than 10 words. Always use English.', type: 'string' }
+    },
+    required: ['id', 'instruction']
+  }
+}
+
+// trigger_agent_dm - Trigger an agent to DM another agent or user
+{
+  name: 'trigger_agent_dm',
+  description: 'Trigger an agent to DM another agent or user.',
+  parameters: {
+    properties: {
+      id: { description: 'The agent id to trigger.', type: 'string' },
+      instruction: { type: 'string' },
+      target: { description: 'The target agent id. Only used when need DM.', type: 'string' }
+    },
+    required: ['instruction', 'id', 'target']
+  }
+}
+
+// wait_for_user_input - Pause conversation until user responds
+{
+  name: 'wait_for_user_input',
+  description: 'Wait for user input. Use this when the conversation history looks likes fine for now, or agents are waiting for user input.',
+  parameters: {
+    properties: {
+      reason: { description: 'Optional reason for pausing the conversation.', type: 'string' }
+    },
+    required: []
+  }
+}
+
+// create_todo - Create a new todo item (productive scene only)
+{
+  name: 'create_todo',
+  description: 'Create a new todo item',
+  parameters: {
+    properties: {
+      content: { description: 'The todo content or description.', type: 'string' },
+      assignee: { description: 'Who will do the todo. Can be agent id or empty.', type: 'string' }
+    },
+    required: ['content', 'assignee']
+  }
+}
+
+// finish_todo - Mark a todo item as complete (productive scene only)
+{
+  name: 'finish_todo',
+  description: 'Finish a todo by index or all todos',
+  parameters: {
+    properties: {
+      index: { type: 'number' }
+    },
+    required: ['index']
+  }
+}
+```
+
+### 3.4 Message Formatting Utilities
+
+**Purpose:** Format and filter messages for group chat context.
+
+**Location:** `packages/prompts/src/prompts/chatMessages/index.ts`
+
+**Functions:**
+
+```typescript
+// groupSupervisorPrompts - Format messages for supervisor with author and target info
+const formatMessage = (message: UIChatMessage) => {
+  const author = message.role === 'user' ? 'user' : message.agentId || 'assistant';
+  const targetAttr = message.targetId ? ` target="${message.targetId}"` : '';
+  return `<message author="${author}"${targetAttr}>${message.content}</message>`;
+};
+
+// filterMessagesForAgent - Filter messages based on DM targeting rules
+// - Agent sees all group messages (no targetId)
+// - Agent sees DMs where they are the target
+// - Agent sees DMs they sent
+// - DMs not involving the agent show "***" instead of content
+
+// consolidateGroupChatHistory - Format messages as "(AuthorName): content"
+```
+
+---
